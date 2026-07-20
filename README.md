@@ -45,12 +45,22 @@ Use the PyTorch build already required by the training environment.
 
 ## Automatic Megatron Patch
 
-The patcher currently targets NVIDIA Megatron-LM commit
-`c550cf6c41c31cd3ec72e05c25ea0c979f2b6631` (`core_r0.13.0`). It adds the
-collector startup, iteration sampling, and explicit initialization, pipeline,
-gradient/parameter synchronization, and optimizer phase markers.
+The patcher adds collector startup, iteration sampling, and explicit
+initialization, pipeline, gradient/parameter synchronization, and optimizer
+phase markers. List the versions supported by the installed tool with:
 
-Review the exact diff before changing the Megatron worktree:
+```bash
+megatron-memfrag-patch --list-supported
+```
+
+| Megatron release | Commit | Source date | Validation |
+| --- | --- | --- | --- |
+| `core_r0.13.0` | `c550cf6c41c31cd3ec72e05c25ea0c979f2b6631` | 2025-07-25 | Apply, Python AST parse, and revert |
+
+See [SUPPORTED_MEGATRON_VERSIONS.md](SUPPORTED_MEGATRON_VERSIONS.md) for the
+compatibility policy and full list.
+
+Minimal patch workflow:
 
 ```bash
 megatron-memfrag-patch /path/to/Megatron-LM --check

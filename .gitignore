@@ -5,6 +5,7 @@
 !.gitattributes
 !LICENSE
 !README.md
+!SUPPORTED_MEGATRON_VERSIONS.md
 !pyproject.toml
 
 !.github/

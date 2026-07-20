@@ -15,7 +15,14 @@ from memory_fragmentation.analyzer import (
     summarize_snapshot,
     write_analysis,
 )
-from memory_fragmentation.megatron_patch import FILE_EDITS, SUPPORTED_COMMITS, _apply_edits
+from memory_fragmentation.megatron_patch import (
+    FILE_EDITS,
+    SUPPORTED_COMMITS,
+    SUPPORTED_VERSIONS,
+    _apply_edits,
+    format_supported_versions,
+    main as patch_main,
+)
 from memory_fragmentation.phases import format_phase_name, memory_phase, parse_phase_name
 
 
@@ -244,6 +251,15 @@ class PhaseTests(unittest.TestCase):
 class MegatronPatchTests(unittest.TestCase):
     def test_supported_target_is_pinned(self):
         self.assertIn("c550cf6c41c31cd3ec72e05c25ea0c979f2b6631", SUPPORTED_COMMITS)
+        self.assertEqual(len(SUPPORTED_VERSIONS), 1)
+
+    def test_list_supported_does_not_require_target(self):
+        with patch("builtins.print") as mocked_print:
+            self.assertEqual(patch_main(["--list-supported"]), 0)
+        output = mocked_print.call_args.args[0]
+        self.assertEqual(output, format_supported_versions())
+        self.assertIn("core_r0.13.0", output)
+        self.assertIn("c550cf6c41c31cd3ec72e05c25ea0c979f2b6631", output)
 
     def test_every_edit_round_trips(self):
         for filename, edits in FILE_EDITS.items():

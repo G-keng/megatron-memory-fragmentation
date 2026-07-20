@@ -13,10 +13,31 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SUPPORTED_COMMITS = {
-    "c550cf6c41c31cd3ec72e05c25ea0c979f2b6631": "Megatron-LM core_r0.13.0 (2025-07-25)",
-}
 PATCH_ID = "memfrag-c550cf6c-v1"
+
+
+@dataclass(frozen=True)
+class SupportedVersion:
+    commit: str
+    release: str
+    source_date: str
+    patch_id: str
+    validation: str
+
+
+SUPPORTED_VERSIONS: Tuple[SupportedVersion, ...] = (
+    SupportedVersion(
+        commit="c550cf6c41c31cd3ec72e05c25ea0c979f2b6631",
+        release="core_r0.13.0",
+        source_date="2025-07-25",
+        patch_id=PATCH_ID,
+        validation="apply + AST parse + revert",
+    ),
+)
+SUPPORTED_COMMITS = {
+    version.commit: f"Megatron-LM {version.release} ({version.source_date})"
+    for version in SUPPORTED_VERSIONS
+}
 
 
 class PatchError(RuntimeError):
@@ -771,23 +792,49 @@ def _ensure_clean_for_apply(root: Path) -> None:
         raise PatchError("target files already have uncommitted changes; review or stash them first")
 
 
+def format_supported_versions() -> str:
+    lines = ["commit\trelease\tsource_date\tpatch_id\tvalidation"]
+    lines.extend(
+        "\t".join(
+            (
+                version.commit,
+                version.release,
+                version.source_date,
+                version.patch_id,
+                version.validation,
+            )
+        )
+        for version in SUPPORTED_VERSIONS
+    )
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Patch Megatron-LM c550cf6c with allocator collection and phase markers."
+        description="Patch supported Megatron-LM revisions with memory tracing phase markers."
     )
-    parser.add_argument("megatron_root", type=Path)
+    parser.add_argument("megatron_root", type=Path, nargs="?")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check", action="store_true", help="validate and report patch state (default)")
     action.add_argument("--dry-run", action="store_true", help="print the patch without writing files")
     action.add_argument("--apply", action="store_true", help="apply the instrumentation")
     action.add_argument("--revert", action="store_true", help="remove this instrumentation")
+    action.add_argument(
+        "--list-supported", action="store_true", help="list supported Megatron-LM revisions"
+    )
     parser.add_argument("--output", type=Path, help="write dry-run diff to this file")
     parser.add_argument("--force-version", action="store_true", help="allow a different commit if all anchors match")
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.list_supported:
+        print(format_supported_versions())
+        return 0
+    if args.megatron_root is None:
+        parser.error("megatron_root is required unless --list-supported is used")
     root = args.megatron_root.resolve()
     try:
         commit = verify_target(root, force_version=args.force_version)
