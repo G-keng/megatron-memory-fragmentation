@@ -25,14 +25,15 @@ _HTML = r"""<!doctype html>
 header{padding:18px 24px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:20px;margin:0}.badge{padding:5px 10px;border-radius:99px;font-weight:700;background:#dff7e8;color:#167044}.badge.approx{background:#fff0d7;color:#945b00}
 .controls{display:flex;gap:16px;flex-wrap:wrap;padding:14px 24px;background:#fff;border-bottom:1px solid var(--line)}label{display:flex;align-items:center;gap:7px;color:var(--muted)}input,select{border:1px solid var(--line);border-radius:7px;padding:6px 8px;background:#fff;color:var(--ink)}
 .warning{margin:14px 24px 0;padding:10px 13px;border-radius:8px;background:#fff4dc;color:#7b5100;border:1px solid #f0d397}.hidden{display:none!important}
-main{padding:14px 24px 28px;display:grid;grid-template-columns:310px minmax(0,1fr);gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 8px #20304a0d}.panel h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
+main{padding:14px 24px 28px;display:grid;grid-template-columns:310px minmax(0,1fr);gap:14px}.panel{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 8px #20304a0d}.panel h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
 .timeline-panel{grid-column:1/-1;padding-bottom:8px}.timeline-wrap{padding:10px 14px 2px}#timeline{width:100%;height:220px;display:block}.axis{stroke:#aeb8c7;stroke-width:1}.timeline-line{fill:none;stroke:var(--blue);stroke-width:2}.timeline-lower{fill:none;stroke:var(--orange);stroke-width:1.4;stroke-dasharray:5 4}.threshold-line{stroke:var(--red);stroke-width:1.5;stroke-dasharray:7 5}.timeline-point{fill:#fff;stroke:var(--red);stroke-width:2;cursor:pointer}
 #moment-list{padding:8px;max-height:690px;overflow:auto}.moment{width:100%;text-align:left;border:1px solid transparent;border-radius:8px;padding:10px;margin-bottom:7px;background:#f7f9fc;color:var(--ink);cursor:pointer}.moment:hover{border-color:#a9bfe6}.moment.selected{border-color:var(--blue);background:#edf4ff}.moment-title{display:flex;justify-content:space-between;font-weight:700}.moment-meta{margin-top:5px;color:var(--muted);font-size:12px}.empty{padding:20px;color:var(--muted);text-align:center}
 .right{display:grid;gap:14px;min-width:0}.metrics{display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:8px;padding:12px}.metric{background:#f7f9fc;border-radius:8px;padding:9px}.metric strong{display:block;font-size:16px;margin-top:3px}.metric span{font-size:11px;color:var(--muted)}
-.legend{display:flex;gap:15px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}.swatch{width:11px;height:11px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}.active{background:var(--blue)}.pending{background:var(--orange)}.stranded{background:var(--red)}.cache{background:var(--gray)}
+.legend{display:flex;gap:15px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}.legend span{flex:0 0 auto}.swatch{width:11px;height:11px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}.active{background:var(--blue)}.pending{background:var(--orange)}.stranded{background:var(--red)}.cache{background:var(--gray)}
 #segments{padding:10px 12px;max-height:480px;overflow:auto}.segment{display:grid;grid-template-columns:205px minmax(300px,1fr);gap:9px;align-items:center;margin:5px 0}.segment-label{font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.segment-bar{height:27px;display:flex;border:1px solid #8e9bad;border-radius:4px;overflow:hidden;background:#e8edf4}.block{height:100%;border:0;border-right:1px solid #ffffff7d;min-width:1px;padding:0;cursor:pointer}.block.pinner{outline:2px solid #7c3aed;outline-offset:-2px}.block:focus{outline:2px solid #111827;outline-offset:-2px}
 #details{padding:12px 14px;min-height:120px;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#31405b;overflow:auto}.phase{font-weight:700;color:var(--blue)}
-@media(max-width:900px){main{grid-template-columns:1fr}.timeline-panel{grid-column:1}.metrics{grid-template-columns:repeat(2,1fr)}.segment{grid-template-columns:1fr}.segment-label{white-space:normal}}
+#causal-chains{max-height:390px;overflow:auto}.causal-row{min-width:0;padding:11px 14px;border-bottom:1px solid var(--line)}.causal-row:last-child{border-bottom:0}.causal-title{display:flex;justify-content:space-between;gap:12px;font-weight:700;overflow-wrap:anywhere}.causal-meta{min-width:0;margin-top:6px;color:var(--muted);font-size:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.causal-meta div{max-width:100%;overflow-wrap:anywhere;word-break:break-word}.causal-empty{padding:16px;color:var(--muted)}
+@media(max-width:900px){main{grid-template-columns:1fr}.timeline-panel{grid-column:1}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.segment{grid-template-columns:minmax(0,1fr)}.segment-label{white-space:normal}.segment-bar{min-width:0;width:100%}.legend span{overflow-wrap:anywhere}}
 </style>
 </head>
 <body>
@@ -49,6 +50,7 @@ main{padding:14px 24px 28px;display:grid;grid-template-columns:310px minmax(0,1f
   <div class="right">
     <section class="panel"><h2 id="moment-heading">时刻详情</h2><div id="metrics" class="metrics"></div></section>
     <section class="panel"><h2>Allocator 布局</h2><div class="legend"><span><i class="swatch active"></i>Active</span><span><i class="swatch pending"></i>Pending free</span><span><i class="swatch stranded"></i>Stranded</span><span><i class="swatch cache"></i>Releasable cache</span><span>紫色边框：候选 pinning allocation</span></div><div id="segments" data-testid="segments"></div></section>
+    <section class="panel"><h2>碎片因果链</h2><div id="causal-chains" data-testid="causal-chains"></div></section>
     <section class="panel"><h2>Block / 阶段信息</h2><div id="details" data-testid="details">点击一个 block 查看详细信息。</div></section>
   </div>
 </main>
@@ -78,7 +80,7 @@ function init(){
   el('threshold').addEventListener('input',()=>{renderList();renderTimeline()});
   el('phase-filter').addEventListener('change',renderList);
   selected=DATA.moments[0]||null;
-  renderList();renderTimeline();renderMoment();
+  renderList();renderTimeline();renderMoment();renderCausalChains();
 }
 
 function filteredMoments(){
@@ -125,6 +127,21 @@ function renderMoment(){
   el('details').textContent=`history mode: ${selected.history_mode||DATA.history_mode}\nphase: ${selected.primary_phase}\nconfidence: ${selected.phase_confidence}\n${phaseMeta(selected.phase_metadata)}\nevent: ${selected.event_index}\ntime_us: ${selected.time_us}\ndevice: ${selected.device}\nfragmentation interval: ${fmtRange(selected)}\nuncertainty: ${fmtBytes(selected.fragmentation_uncertainty_bytes||0)}`;
 }
 function showBlock(seg,block){el('details').textContent=`segment: ${seg.address}\nsegment size: ${fmtBytes(seg.total_size)}\nstream: ${seg.stream}\nblock: ${block.address}\nblock size: ${fmtBytes(block.size)}\nrequested: ${fmtBytes(block.requested_size)}\nstate: ${block.state}\nreconstructed: ${Boolean(block.reconstructed)}\nuncertainty: ${fmtBytes(block.uncertainty_bytes||0)}\n\n${(block.frames||[]).join('\n')||'no allocation frames'}`}
+function renderCausalChains(){
+  const root=el('causal-chains'),chains=DATA.causal_chains||[];root.replaceChildren();
+  if(!chains.length){const d=document.createElement('div');d.className='causal-empty';d.textContent=DATA.exact?'未检测到 failed-fit 因果链。':'因果链仅在精确正向重放时生成。';root.appendChild(d);return}
+  chains.forEach(chain=>{
+    const row=document.createElement('div');row.className='causal-row';
+    const title=document.createElement('div');title.className='causal-title';
+    const exposed=chain.exposed_at||{},request=chain.request||{},pinner=(chain.pinners||[])[0],sources=chain.fragment_sources||[];
+    const left=document.createElement('span');left.textContent=`failed-fit · ${exposed.primary_phase||'unknown'}`;
+    const right=document.createElement('span');right.textContent=`+${fmtBytes(request.extra_segment_bytes)}`;title.append(left,right);
+    const meta=document.createElement('div');meta.className='causal-meta';
+    const lines=[`request ${fmtBytes(request.requested_bytes)}`,`compatible ${fmtBytes(request.compatible_free_bytes)} · largest ${fmtBytes(request.largest_free_block)}`];
+    if(pinner){const created=pinner.created_at||{};lines.push(`main pinner ${pinner.allocation_address_hex||pinner.allocation_address}`);lines.push(`allocation ${fmtBytes(pinner.allocation_bytes)} · pinned ${fmtBytes(pinner.pinned_free_bytes)} · score ${Number(pinner.pinning_score||0).toFixed(3)}`);lines.push(`created ${created.primary_phase||'unknown'} · age ${Number(pinner.age_at_exposure_us||0)} us`);lines.push(`lifetime ${Number(pinner.lifetime_us||0)} us${pinner.lifetime_complete?'':' (trace lower bound)'}`)}
+    lines.push(`${chain.blocking_segments?.length||0} blocking segments`,`${chain.pinners?.length||0} pinner candidates`,`${sources.length} fragment sources`);lines.forEach(text=>{const line=document.createElement('div');line.textContent=text;meta.appendChild(line)});row.append(title,meta);root.appendChild(row)
+  })
+}
 init();
 </script>
 </body>

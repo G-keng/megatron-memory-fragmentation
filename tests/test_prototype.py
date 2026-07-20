@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 import tempfile
 import sys
@@ -194,6 +195,49 @@ def truncated_snapshot():
     }
 
 
+def completed_pinner_snapshot():
+    snapshot = copy.deepcopy(synthetic_snapshot())
+    base = 0x10000000
+    events = snapshot["device_traces"][0]
+    frame = events[0]["frames"]
+    events[-1:] = [
+        {
+            "action": "free_requested",
+            "addr": base + 8 * MIB,
+            "size": 8 * MIB,
+            "stream": 0,
+            "time_us": 8,
+            "frames": frame,
+        },
+        {
+            "action": "free_completed",
+            "addr": base + 8 * MIB,
+            "size": 8 * MIB,
+            "stream": 0,
+            "time_us": 9,
+            "frames": frame,
+        },
+        {
+            "action": "snapshot",
+            "addr": 0,
+            "size": 0,
+            "stream": 0,
+            "time_us": 10,
+            "frames": frame,
+        },
+    ]
+    snapshot["segments"][0]["blocks"] = [
+        {
+            "address": base,
+            "size": 20 * MIB,
+            "requested_size": 0,
+            "state": "inactive",
+        }
+    ]
+    snapshot["external_annotations"][1]["time_us"] = 10
+    return snapshot
+
+
 class PhaseTests(unittest.TestCase):
     def test_phase_name_round_trip(self):
         name = format_phase_name(
@@ -290,7 +334,23 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(failed[0]["largest_free_block"], 8 * MIB)
         self.assertEqual(failed[0]["primary_phase"], "pipeline/steady/forward")
         self.assertEqual(failed[0]["phase_metadata"]["microbatch"], 2)
+        self.assertEqual(len(result["causal_chains"]), 1)
+        chain = failed[0]["causal_chain"]
+        self.assertEqual(chain["confidence"], "exact_replay_heuristic_attribution")
+        self.assertEqual(chain["exposed_at"]["primary_phase"], "pipeline/steady/forward")
+        self.assertEqual(chain["request"]["compatible_free_bytes"], 12 * MIB)
+        self.assertEqual(len(chain["blocking_segments"]), 1)
+        self.assertEqual(len(chain["fragment_sources"]), 2)
+        pinner = chain["pinners"][0]
+        self.assertEqual(pinner["allocation_address_hex"], "0x10800000")
+        self.assertEqual(pinner["pinned_free_bytes"], 12 * MIB)
+        self.assertEqual(pinner["pinning_score"], 1.5)
+        self.assertEqual(pinner["age_at_exposure_us"], 3)
+        self.assertEqual(pinner["lifetime_us"], 5)
+        self.assertFalse(pinner["lifetime_complete"])
+        self.assertTrue(pinner["lifetime_is_lower_bound"])
         self.assertTrue(result["dashboard"]["exact"])
+        self.assertEqual(len(result["dashboard"]["causal_chains"]), 1)
         self.assertGreaterEqual(len(result["dashboard"]["moments"]), 1)
         self.assertTrue(result["dashboard"]["moments"][0]["segments"])
 
@@ -299,15 +359,29 @@ class AnalyzerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             write_analysis(result, Path(directory), top=10)
             html = (Path(directory) / "dashboard.html").read_text(encoding="utf-8")
+            chains = (Path(directory) / "causal_chains.json").read_text(encoding="utf-8")
             self.assertIn("GPU Memory Fragmentation Dashboard", html)
             self.assertIn('data-testid="moment-list"', html)
+            self.assertIn('data-testid="causal-chains"', html)
+            self.assertIn("exact_replay_heuristic_attribution", chains)
             self.assertNotIn("<img", html.lower())
+
+    def test_causal_chain_tracks_completed_pinner_lifetime(self):
+        result = analyze_snapshot(completed_pinner_snapshot())
+        self.assertTrue(result["replay"]["exact"], result["replay"]["error"])
+        pinner = result["causal_chains"][0]["pinners"][0]
+        self.assertEqual(pinner["free_time_us"], 9)
+        self.assertEqual(pinner["lifetime_us"], 6)
+        self.assertTrue(pinner["lifetime_complete"])
+        self.assertFalse(pinner["lifetime_is_lower_bound"])
 
     def test_truncated_trace_uses_reverse_top_k(self):
         result = analyze_snapshot(truncated_snapshot(), top_k=10)
         self.assertFalse(result["replay"]["exact"])
         self.assertEqual(result["replay"]["mode"], "reverse_approximate")
         self.assertTrue(result["replay"]["reverse_available"])
+        self.assertFalse(result["replay"]["causal_chains_available"])
+        self.assertEqual(result["causal_chains"], [])
         dashboard = result["dashboard"]
         self.assertEqual(dashboard["history_mode"], "reverse_approximate")
         self.assertEqual(len(dashboard["moments"]), 3)

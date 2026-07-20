@@ -3,7 +3,7 @@
 from .collector import MemoryTraceCollector, get_collector
 from .phases import MEMORY_PHASES, memory_phase, parse_phase_name
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "MEMORY_PHASES",

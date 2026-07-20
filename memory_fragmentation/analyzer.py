@@ -262,6 +262,7 @@ class ReplayBlock:
     state: str = "inactive"
     frames: List[Dict[str, Any]] = field(default_factory=list)
     alloc_time_us: Optional[int] = None
+    allocation_id: Optional[int] = None
 
 
 @dataclass
@@ -343,6 +344,9 @@ class NativeReplay:
         )
         self.timeline: List[Dict[str, Any]] = []
         self.captured_states: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        self.pinner_watchers: DefaultDict[int, List[Dict[str, Any]]] = defaultdict(list)
+        self.next_allocation_id = 1
+        self.device_end_time_us: Dict[int, int] = {}
         self.last_time_us = 0
 
     def run(self) -> Dict[str, Any]:
@@ -354,6 +358,7 @@ class NativeReplay:
             for device, events in enumerate(self.snapshot.get("device_traces", [])):
                 self._run_device(device, events)
             self._close_open_fragments(self.last_time_us)
+            self._finalize_causal_chains()
             self._validate_final_snapshot()
         except ReplayError as exc:
             return self._failure(str(exc))
@@ -385,6 +390,7 @@ class NativeReplay:
             action = str(event.get("action", ""))
             time_us = int(event.get("time_us", self.last_time_us))
             self.last_time_us = max(self.last_time_us, time_us)
+            self.device_end_time_us[device] = max(self.device_end_time_us.get(device, 0), time_us)
             if action == "segment_alloc":
                 self._segment_alloc(device, events, index, event, time_us)
             elif action == "segment_free":
@@ -442,11 +448,36 @@ class NativeReplay:
             compatible_free = sum(block.size for block in domain_blocks)
             largest = max((block.size for block in domain_blocks), default=0)
             if compatible_free >= rounded and largest < rounded:
-                pinner = self._main_pinner(device, pool, segment_type, stream)
+                pinners, blocking_segments = self._pinning_candidates(
+                    device, pool, segment_type, stream
+                )
+                fragment_sources = self._fragment_sources(
+                    device, blocking_segments, time_us
+                )
+                causal_chain = {
+                    "confidence": "exact_replay_heuristic_attribution",
+                    "reason": "compatible free bytes were sufficient but no free block fit the request",
+                    "blocking_domain": {
+                        "pool_id": list(pool),
+                        "segment_type": segment_type,
+                        "stream": stream,
+                    },
+                    "request": {
+                        "requested_bytes": int(next_alloc["size"]),
+                        "rounded_bytes": rounded,
+                        "compatible_free_bytes": compatible_free,
+                        "largest_free_block": largest,
+                        "extra_segment_bytes": total_size,
+                    },
+                    "blocking_segments": blocking_segments,
+                    "pinners": pinners,
+                    "fragment_sources": fragment_sources,
+                }
                 self.incidents.append(
                     {
                         "type": "failed-fit",
                         "device": device,
+                        "event_index": index,
                         "time_us": time_us,
                         "address": address,
                         "request_bytes": int(next_alloc["size"]),
@@ -455,7 +486,8 @@ class NativeReplay:
                         "compatible_free_bytes": compatible_free,
                         "largest_free_block": largest,
                         "frames": next_alloc.get("frames", event.get("frames", [])),
-                        "main_pinner": pinner,
+                        "main_pinner": pinners[0] if pinners else None,
+                        "causal_chain": causal_chain,
                     }
                 )
 
@@ -501,6 +533,8 @@ class NativeReplay:
             raise ReplayError(f"request does not fit block at 0x{address:x}")
 
         allocated_size = rounded if _should_split(block.size, rounded, segment.segment_type, self.settings) else block.size
+        allocation_id = self.next_allocation_id
+        self.next_allocation_id += 1
         allocated = ReplayBlock(
             address=address,
             size=allocated_size,
@@ -508,6 +542,7 @@ class NativeReplay:
             state="active_allocated",
             frames=copy.deepcopy(event.get("frames", [])),
             alloc_time_us=time_us,
+            allocation_id=allocation_id,
         )
         replacement = [allocated]
         if allocated_size < block.size:
@@ -533,10 +568,14 @@ class NativeReplay:
         index, block = self._find_block(segment, address)
         if not _is_active(block.state):
             raise ReplayError(f"free_completed for unknown allocation at 0x{address:x}")
+        if block.allocation_id is not None:
+            for pinner in self.pinner_watchers.pop(block.allocation_id, []):
+                pinner["free_time_us"] = time_us
         block.state = "inactive"
         block.requested_size = 0
         block.frames = []
         block.alloc_time_us = None
+        block.allocation_id = None
         if index > 0 and segment.blocks[index - 1].state == "inactive":
             previous = segment.blocks[index - 1]
             previous.size += block.size
@@ -669,34 +708,119 @@ class NativeReplay:
             if block.state == "inactive"
         ]
 
-    def _main_pinner(
+    def _pinning_candidates(
         self, device: int, pool: Tuple[int, int], segment_type: str, stream: int
-    ) -> Optional[Dict[str, Any]]:
-        candidates = [
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        compatible_segments = [
             segment
             for segment in self.segments[device]
             if segment.pool_id == pool
             and segment.segment_type == segment_type
             and segment.stream == stream
-            and segment.stranded_bytes() > 0
         ]
-        if not candidates:
-            return None
-        segment = max(candidates, key=lambda value: value.stranded_bytes())
-        active = [block for block in segment.blocks if _is_active(block.state)]
-        if not active:
-            return None
-        block = min(active, key=lambda value: value.size)
-        return {
-            "segment_address": segment.address,
-            "allocation_address": block.address,
-            "allocation_bytes": block.size,
-            "requested_bytes": block.requested_size,
-            "pinned_free_bytes": segment.stranded_bytes(),
-            "alloc_time_us": block.alloc_time_us,
-            "frames": block.frames,
-            "co_pinners": len(active),
-        }
+        pinners: List[Dict[str, Any]] = []
+        blocking_segments: List[Dict[str, Any]] = []
+        for segment in compatible_segments:
+            inactive = [block for block in segment.blocks if block.state == "inactive"]
+            if not inactive:
+                continue
+            active = [block for block in segment.blocks if _is_active(block.state)]
+            free_bytes = sum(block.size for block in inactive)
+            blocking_segments.append(
+                {
+                    "segment_address": segment.address,
+                    "segment_address_hex": f"0x{segment.address:x}",
+                    "segment_bytes": segment.total_size,
+                    "free_bytes": free_bytes,
+                    "largest_free_block": max(block.size for block in inactive),
+                    "active_bytes": sum(block.size for block in active),
+                    "active_allocations": len(active),
+                    "partially_active": bool(active),
+                }
+            )
+            if not active:
+                continue
+            block = min(active, key=lambda value: (value.size, value.address))
+            pinner = {
+                "_allocation_id": block.allocation_id,
+                "segment_address": segment.address,
+                "segment_address_hex": f"0x{segment.address:x}",
+                "segment_bytes": segment.total_size,
+                "allocation_address": block.address,
+                "allocation_address_hex": f"0x{block.address:x}",
+                "allocation_bytes": block.size,
+                "requested_bytes": block.requested_size,
+                "state_at_exposure": block.state,
+                "pinned_free_bytes": free_bytes,
+                "pinning_score": free_bytes / max(1, block.size),
+                "alloc_time_us": block.alloc_time_us,
+                "frames": copy.deepcopy(block.frames),
+                "co_pinners": len(active),
+            }
+            pinners.append(pinner)
+            if block.allocation_id is not None:
+                self.pinner_watchers[block.allocation_id].append(pinner)
+        pinners.sort(
+            key=lambda value: (
+                float(value["pinning_score"]),
+                int(value["pinned_free_bytes"]),
+            ),
+            reverse=True,
+        )
+        blocking_segments.sort(key=lambda value: int(value["free_bytes"]), reverse=True)
+        return pinners, blocking_segments
+
+    def _fragment_sources(
+        self,
+        device: int,
+        blocking_segments: Sequence[Dict[str, Any]],
+        exposure_time_us: int,
+    ) -> List[Dict[str, Any]]:
+        sources: List[Dict[str, Any]] = []
+        for segment in blocking_segments:
+            key = (device, int(segment["segment_address"]))
+            for incident_index, amount, start in self.open_fragments.get(key, []):
+                incident = self.incidents[incident_index]
+                sources.append(
+                    {
+                        "segment_address": int(segment["segment_address"]),
+                        "segment_address_hex": str(segment["segment_address_hex"]),
+                        "created_time_us": int(start),
+                        "age_at_exposure_us": max(0, exposure_time_us - int(start)),
+                        "remaining_stranded_bytes": int(amount),
+                        "original_stranded_delta_bytes": int(
+                            incident.get("stranded_delta_bytes", amount)
+                        ),
+                        "trigger_action": incident.get("trigger_action"),
+                        "trigger_address": incident.get("trigger_address"),
+                        "frames": copy.deepcopy(incident.get("frames", [])),
+                    }
+                )
+        sources.sort(key=lambda value: int(value["remaining_stranded_bytes"]), reverse=True)
+        return sources
+
+    def _finalize_causal_chains(self) -> None:
+        for incident in self.incidents:
+            chain = incident.get("causal_chain")
+            if not isinstance(chain, dict):
+                continue
+            device = int(incident.get("device", 0))
+            end_time_us = self.device_end_time_us.get(device, self.last_time_us)
+            exposure_time = int(incident.get("time_us", end_time_us))
+            for pinner in chain.get("pinners", []):
+                pinner.pop("_allocation_id", None)
+                free_time = pinner.get("free_time_us")
+                alloc_time = pinner.get("alloc_time_us")
+                lifetime_end = int(free_time) if free_time is not None else end_time_us
+                pinner["free_time_us"] = free_time
+                pinner["lifetime_complete"] = free_time is not None
+                pinner["lifetime_is_lower_bound"] = free_time is None
+                pinner["lifetime_us"] = (
+                    max(0, lifetime_end - int(alloc_time)) if alloc_time is not None else None
+                )
+                pinner["age_at_exposure_us"] = (
+                    max(0, exposure_time - int(alloc_time)) if alloc_time is not None else None
+                )
 
     def _validate_final_snapshot(self) -> None:
         expected: Dict[int, List[Tuple[Any, ...]]] = defaultdict(list)
@@ -1311,6 +1435,18 @@ def build_static_pinning_incidents(snapshot: Dict[str, Any]) -> List[Dict[str, A
     return incidents
 
 
+def _phase_point(
+    resolver: PhaseResolver,
+    device: int,
+    time_us: Optional[int],
+    frames: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return {
+        "time_us": time_us,
+        **resolver.resolve(device, time_us, frames),
+    }
+
+
 def analyze_snapshot(
     snapshot: Dict[str, Any],
     min_fragment_bytes: int = MIB,
@@ -1342,17 +1478,49 @@ def analyze_snapshot(
             incident.get("frames", []),
         )
         incident.update(phase)
-        pinner = incident.get("main_pinner")
-        if isinstance(pinner, dict):
-            pinner.update(
-                resolver.resolve(
-                    int(incident.get("device", 0)),
-                    int(pinner["alloc_time_us"]) if pinner.get("alloc_time_us") is not None else None,
-                    pinner.get("frames", []),
-                )
+        chain = incident.get("causal_chain")
+        if isinstance(chain, dict):
+            device = int(incident.get("device", 0))
+            chain_id = (
+                f"device{device}-event{int(incident.get('event_index', -1))}-"
+                f"segment0x{int(incident.get('address', 0)):x}"
             )
+            incident["chain_id"] = chain_id
+            chain["chain_id"] = chain_id
+            chain["exposed_at"] = _phase_point(
+                resolver,
+                device,
+                int(incident["time_us"]) if incident.get("time_us") is not None else None,
+                incident.get("frames", []),
+            )
+            for pinner in chain.get("pinners", []):
+                alloc_time = (
+                    int(pinner["alloc_time_us"])
+                    if pinner.get("alloc_time_us") is not None
+                    else None
+                )
+                pinner["created_at"] = _phase_point(
+                    resolver, device, alloc_time, pinner.get("frames", [])
+                )
+            for source in chain.get("fragment_sources", []):
+                created_time = (
+                    int(source["created_time_us"])
+                    if source.get("created_time_us") is not None
+                    else None
+                )
+                source["created_at"] = _phase_point(
+                    resolver, device, created_time, source.get("frames", [])
+                )
+            pinner = incident.get("main_pinner")
+            if isinstance(pinner, dict) and isinstance(pinner.get("created_at"), dict):
+                pinner.update(pinner["created_at"])
 
     incidents.sort(key=_incident_score, reverse=True)
+    causal_chains = [
+        incident["causal_chain"]
+        for incident in incidents
+        if isinstance(incident.get("causal_chain"), dict)
+    ]
     dashboard = _build_dashboard_data(
         snapshot,
         summary,
@@ -1381,8 +1549,11 @@ def analyze_snapshot(
             "reverse_available": bool(reverse.get("available")),
             "reverse_error": reverse.get("error"),
             "reverse_assumptions": reverse.get("assumptions", {}),
+            "causal_chain_count": len(causal_chains),
+            "causal_chains_available": bool(replay["exact"]),
         },
         "incidents": incidents,
+        "causal_chains": causal_chains,
         "dashboard": dashboard,
     }
 
@@ -1542,6 +1713,11 @@ def _build_dashboard_data(
         "timeline": timeline,
         "moments": moments,
         "phase_intervals": phase_intervals,
+        "causal_chains": [
+            incident["causal_chain"]
+            for incident in incidents
+            if isinstance(incident.get("causal_chain"), dict)
+        ][:top_k],
         "incidents": [
             {
                 key: incident.get(key)
@@ -1553,6 +1729,8 @@ def _build_dashboard_data(
                     "pinned_free_bytes",
                     "extra_segment_bytes",
                     "stranded_delta_bytes",
+                    "chain_id",
+                    "causal_chain",
                 )
             }
             for incident in incidents[:top_k]
@@ -1578,6 +1756,8 @@ def write_analysis(result: Dict[str, Any], output_dir: Path, top: int = 50) -> N
         json.dump(result["replay"], handle, ensure_ascii=False, indent=2, sort_keys=True)
     with (output_dir / "incidents.json").open("w", encoding="utf-8") as handle:
         json.dump(result["incidents"][:top], handle, ensure_ascii=False, indent=2, sort_keys=True)
+    with (output_dir / "causal_chains.json").open("w", encoding="utf-8") as handle:
+        json.dump(result["causal_chains"][:top], handle, ensure_ascii=False, indent=2, sort_keys=True)
     columns = (
         "type",
         "device",
@@ -1593,6 +1773,10 @@ def write_analysis(result: Dict[str, Any], output_dir: Path, top: int = 50) -> N
         "largest_free_block",
         "segment_address",
         "allocation_address",
+        "chain_id",
+        "main_pinner_address",
+        "main_pinner_pinning_score",
+        "main_pinner_lifetime_us",
         "phase_metadata",
     )
     with (output_dir / "incidents.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -1600,6 +1784,11 @@ def write_analysis(result: Dict[str, Any], output_dir: Path, top: int = 50) -> N
         writer.writeheader()
         for incident in result["incidents"][:top]:
             row = dict(incident)
+            pinner = incident.get("main_pinner")
+            if isinstance(pinner, dict):
+                row["main_pinner_address"] = pinner.get("allocation_address")
+                row["main_pinner_pinning_score"] = pinner.get("pinning_score")
+                row["main_pinner_lifetime_us"] = pinner.get("lifetime_us")
             row["phase_metadata"] = json.dumps(row.get("phase_metadata", {}), ensure_ascii=False)
             writer.writerow(row)
     write_dashboard(result["dashboard"], output_dir / "dashboard.html")

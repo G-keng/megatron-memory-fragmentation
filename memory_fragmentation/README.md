@@ -5,6 +5,7 @@
 - `phases.py`：用结构化 `record_function`/NVTX 标记训练逻辑阶段。
 - `collector.py`：指定 rank 采完整 memory snapshot，其余 rank 记录轻量统计。
 - `analyzer.py`：拆分 cache 与碎片、尝试精确重放，并为事件关联逻辑阶段。
+- 精确重放时为 failed-fit 生成 pinner、碎片来源和 allocation 生命周期因果链。
 - `megatron_instrumentation_example.py`：Megatron 调度循环中的逻辑插桩位置。
 
 ## 1. Megatron 自动 patch
@@ -121,11 +122,34 @@ megatron-memfrag analyze_input.pickle -o analysis --top 30 --top-k 10
 - `summary.json`：reserved、active、releasable cache、stranded free、internal waste。
 - `replay.json`：历史模式、精确重放失败原因、反向重放假设和可用性。
 - `incidents.json` / `incidents.csv`：fragment-created、failed-fit 和 segment-pinned 事件及逻辑阶段。
+- `causal_chains.json`：failed-fit 的暴露阶段、阻塞 segment、候选 pinner、碎片产生来源及生命周期。
 - `dashboard.html`：单文件交互式窗口，查看碎片率时间线和默认 Top-10 allocator 状态。
 
 直接用浏览器打开 `dashboard.html`。窗口内可以调整显示的 K（最多使用预计算的候选时刻）、碎片率阈值和逻辑阶段；点击 Top-K 条目或时间线圆点即可切换 allocator 布局，不会生成任何中间图片。
 
 原始 pickle 仍可直接拖入 <https://docs.pytorch.org/memory_viz> 查看地址布局。
+
+### 碎片因果链
+
+精确正向重放检测到 failed-fit 后，会输出：
+
+```text
+failed-fit 暴露阶段
+  -> compatible pool/stream 中的阻塞 segments
+  -> 每个部分活跃 segment 的候选 pinning allocation
+  -> allocation 的创建阶段和存活时间
+  -> 当时仍未消除的 fragment-created 来源
+```
+
+候选 pinner 按以下指标排序：
+
+```text
+pinning_score = pinned_free_bytes / allocation_bytes
+```
+
+一个 segment 可能同时存在多个 active allocation，因此 `main pinner` 是基于精确 allocator 状态的启发式归因，不代表唯一因果。`co_pinners` 会保留共同 pinner 数。若 allocation 在 trace 结束时仍存活，`lifetime_us` 标记为观测下界；若之后出现 `free_completed`，则记录完整生命周期。
+
+反向近似重放不会生成因果链，因为截断历史不足以可靠恢复当时的 split/merge 和 pinner 集合。
 
 ## 4. 精确与近似结果
 

@@ -22,6 +22,8 @@ snapshot contains only a retained trace window.
   per-iteration statistics on all ranks.
 - Native-allocator replay with segment, active block, inactive block, and
   pending-free state.
+- Failed-fit causal chains linking blocking segments to candidate pinning
+  allocations, creation phases, fragment sources, and allocation lifetimes.
 - Fragmentation metrics that separate internal waste, releasable cache, and
   non-releasable free space in partially active segments.
 - Conservative reverse replay for truncated ring-buffer traces, including an
@@ -137,8 +139,28 @@ Generated artifacts:
 - `replay.json`: replay mode, failure reason, and reverse-replay assumptions.
 - `incidents.json` / `incidents.csv`: exact replay incidents and final-state
   pinned-segment candidates.
+- `causal_chains.json`: phase-resolved failed-fit exposure, blocking segments,
+  candidate pinners, fragment sources, and allocation lifetimes.
 - `dashboard.html`: standalone interactive report; no image generation or web
   server is required.
+
+## Causal Attribution
+
+For an exact-replay `failed-fit`, the analyzer freezes the compatible
+pool/stream state immediately before the extra segment allocation. It records
+every contributing free segment, chooses one representative active allocation
+per partially active segment, and ranks candidates by:
+
+```text
+pinning_score = pinned_free_bytes / allocation_bytes
+```
+
+The chain also links still-open `fragment-created` incidents and resolves the
+creation and exposure phases independently. `main_pinner` is explicitly a
+heuristic attribution because multiple active allocations can pin the same
+segment. A lifetime is marked as a lower bound when the allocation remains live
+at the end of the retained trace. Approximate reverse replay does not fabricate
+causal chains.
 
 ## Replay Modes
 

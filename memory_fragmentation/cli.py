@@ -46,6 +46,16 @@ def _print_summary(result: Dict[str, Any], top: int) -> None:
             f"  {incident['type']:18s} {format_bytes(int(magnitude)):>12s} "
             f"phase={incident.get('primary_phase')} {suffix}".rstrip()
         )
+        pinner = incident.get("main_pinner")
+        if incident.get("type") == "failed-fit" and isinstance(pinner, dict):
+            lifetime_suffix = "" if pinner.get("lifetime_complete") else "+"
+            print(
+                f"    cause: pinner={pinner.get('allocation_address_hex')} "
+                f"allocation={format_bytes(int(pinner.get('allocation_bytes', 0)))} "
+                f"pinned={format_bytes(int(pinner.get('pinned_free_bytes', 0)))} "
+                f"score={float(pinner.get('pinning_score', 0.0)):.3f} "
+                f"lifetime={int(pinner.get('lifetime_us', 0))}{lifetime_suffix} us"
+            )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
