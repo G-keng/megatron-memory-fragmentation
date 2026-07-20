@@ -1,0 +1,31 @@
+# Privacy-first allowlist: only the distributable tool is tracked.
+*
+
+!.gitignore
+!.gitattributes
+!LICENSE
+!README.md
+!pyproject.toml
+
+!.github/
+!.github/workflows/
+!.github/workflows/ci.yml
+
+!memory_fragmentation/
+!memory_fragmentation/*.py
+!memory_fragmentation/README.md
+!tests/
+!tests/*.py
+
+# Never publish generated or potentially sensitive artifacts.
+**/__pycache__/
+**/*.py[cod]
+**/*.pickle
+**/*.pkl
+**/memory-traces/
+**/analysis/
+**/log/
+**/data/
+*.egg-info/
+.pytest_cache/
+.coverage
