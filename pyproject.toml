@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "megatron-memory-fragmentation"
-version = "0.1.0"
+version = "0.2.0"
 description = "GPU memory fragmentation tracing and replay for Megatron-LM training"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,6 +33,7 @@ Source = "https://github.com/G-keng/megatron-memory-fragmentation"
 
 [project.scripts]
 megatron-memfrag = "memory_fragmentation.cli:main"
+megatron-memfrag-patch = "memory_fragmentation.megatron_patch:main"
 
 [tool.setuptools]
 include-package-data = false

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import sys
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from memory_fragmentation.analyzer import (
     MIB,
@@ -11,7 +15,8 @@ from memory_fragmentation.analyzer import (
     summarize_snapshot,
     write_analysis,
 )
-from memory_fragmentation.phases import format_phase_name, parse_phase_name
+from memory_fragmentation.megatron_patch import FILE_EDITS, SUPPORTED_COMMITS, _apply_edits
+from memory_fragmentation.phases import format_phase_name, memory_phase, parse_phase_name
 
 
 def synthetic_snapshot():
@@ -222,6 +227,34 @@ class PhaseTests(unittest.TestCase):
         )
         self.assertEqual(resolved["primary_phase"], "pipeline/unknown/backward")
         self.assertEqual(resolved["phase_confidence"], "stack_rule")
+
+    def test_nested_phase_inherits_iteration(self):
+        fake_torch = SimpleNamespace(
+            profiler=SimpleNamespace(record_function=lambda _name: nullcontext()),
+            cuda=SimpleNamespace(is_available=lambda: False),
+        )
+        with patch.dict(sys.modules, {"torch": fake_torch}):
+            with memory_phase("train/iteration", iteration=9):
+                with memory_phase("pipeline/steady/forward", microbatch=3) as name:
+                    parsed = parse_phase_name(name)
+        self.assertEqual(parsed["iteration"], 9)
+        self.assertEqual(parsed["microbatch"], 3)
+
+
+class MegatronPatchTests(unittest.TestCase):
+    def test_supported_target_is_pinned(self):
+        self.assertIn("c550cf6c41c31cd3ec72e05c25ea0c979f2b6631", SUPPORTED_COMMITS)
+
+    def test_every_edit_round_trips(self):
+        for filename, edits in FILE_EDITS.items():
+            for edit in edits:
+                with self.subTest(filename=filename, edit=edit.name):
+                    source = ("\n# repeated anchor boundary\n").join(
+                        edit.before for _ in range(edit.count)
+                    )
+                    patched = _apply_edits(source, [edit])
+                    self.assertNotEqual(patched, source)
+                    self.assertEqual(_apply_edits(patched, [edit], reverse=True), source)
 
 
 class AnalyzerTests(unittest.TestCase):

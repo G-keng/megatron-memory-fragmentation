@@ -43,6 +43,31 @@ python -m pip install -e .
 
 Use the PyTorch build already required by the training environment.
 
+## Automatic Megatron Patch
+
+The patcher currently targets NVIDIA Megatron-LM commit
+`c550cf6c41c31cd3ec72e05c25ea0c979f2b6631` (`core_r0.13.0`). It adds the
+collector startup, iteration sampling, and explicit initialization, pipeline,
+gradient/parameter synchronization, and optimizer phase markers.
+
+Review the exact diff before changing the Megatron worktree:
+
+```bash
+megatron-memfrag-patch /path/to/Megatron-LM --check
+megatron-memfrag-patch /path/to/Megatron-LM --dry-run > memtrace.patch
+megatron-memfrag-patch /path/to/Megatron-LM --apply
+```
+
+The operation is idempotent and can be undone with:
+
+```bash
+megatron-memfrag-patch /path/to/Megatron-LM --revert
+```
+
+`--apply` refuses dirty target files. A different commit is rejected unless
+`--force-version` is supplied, and every source anchor must still match its
+expected count before any file is written.
+
 ## Capture
 
 Start history recording before the first CUDA allocation on selected ranks:
