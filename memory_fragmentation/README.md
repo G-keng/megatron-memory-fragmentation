@@ -7,7 +7,44 @@
 - `analyzer.py`：拆分 cache 与碎片、尝试精确重放，并为事件关联逻辑阶段。
 - `megatron_instrumentation_example.py`：Megatron 调度循环中的逻辑插桩位置。
 
-## 1. 训练侧接入
+## 1. Megatron 自动 patch
+
+自动 patch 会加入 collector 启动、iteration 采样，以及初始化、pipeline、梯度/参数同步和优化器阶段标记。先查询当前工具支持的 Megatron-LM 版本：
+
+```bash
+megatron-memfrag-patch --list-supported
+```
+
+当前支持列表：
+
+| Megatron 版本 | Commit | 源码日期 | 验证状态 |
+| --- | --- | --- | --- |
+| `core_r0.13.0` | `c550cf6c41c31cd3ec72e05c25ea0c979f2b6631` | 2025-07-25 | apply、Python AST 解析及 revert 通过 |
+
+完整兼容性说明见 [`SUPPORTED_MEGATRON_VERSIONS.md`](../SUPPORTED_MEGATRON_VERSIONS.md)。
+
+最简使用流程：
+
+```bash
+# 检查 commit 和当前 patch 状态，不修改源码
+megatron-memfrag-patch /path/to/Megatron-LM --check
+
+# 生成并审阅补丁内容，不修改源码
+megatron-memfrag-patch /path/to/Megatron-LM --dry-run > memtrace.patch
+
+# 应用插桩
+megatron-memfrag-patch /path/to/Megatron-LM --apply
+```
+
+需要撤销时执行：
+
+```bash
+megatron-memfrag-patch /path/to/Megatron-LM --revert
+```
+
+`--apply` 会拒绝修改目标文件已经存在未提交改动的工作树。非支持列表中的 commit 默认拒绝；实验性使用 `--force-version` 前必须先检查 `--dry-run`，且所有源码结构锚点仍需准确匹配。
+
+## 2. 训练侧手工接入
 
 将本目录的父目录加入 `PYTHONPATH`，在首次 CUDA allocation 前调用：
 
@@ -61,7 +98,7 @@ except BaseException as exc:
 
 完整示例见 `megatron_instrumentation_example.py`。对异步 grad/parameter sync，分别标记启动和完成函数；不要根据 tracer 自己重新计算 pipeline 阶段。
 
-## 2. 离线分析
+## 3. 离线分析
 
 安装仓库后执行：
 
@@ -90,7 +127,7 @@ megatron-memfrag analyze_input.pickle -o analysis --top 30 --top-k 10
 
 原始 pickle 仍可直接拖入 <https://docs.pytorch.org/memory_viz> 查看地址布局。
 
-## 3. 精确与近似结果
+## 4. 精确与近似结果
 
 精确重放仅支持：
 
